@@ -1,55 +1,65 @@
-# Starter pipeline
-# Start with a minimal pipeline that you can customize to build and deploy your code.
-# Add steps that build, run tests, deploy, and more:
-# https://aka.ms/yaml
-
 trigger: none
-
 pr: none
+
+# ============================================================
+# Runtime parameters
+# ============================================================
 
 parameters:
 - name: sourceBuildId
-  displayName: 'Azure SDK Build ID'
+  displayName: 'XCFramework Azure Build ID'
   type: string
 
 
+# ============================================================
+# Variables
+# ============================================================
+
 variables:
 
-  # =========================================================
+  # ----------------------------------------------------------
   # Azure DevOps
-  # =========================================================
+  # ----------------------------------------------------------
 
-  # Replace with the Definition ID of your existing
-  # XCFramework build pipeline.
+  # ID of the existing pipeline that builds:
   #
-  # Example URL:
+  # SecuredCallsVoiceSDK.xcframework.zip
+  #
+  # Example pipeline URL:
   # .../_build?definitionId=123
-  sourcePipelineDefinitionId: '106'
+  #
+  sourcePipelineDefinitionId: 'REPLACE_WITH_PIPELINE_DEFINITION_ID'
 
-  azureProject: '$(System.TeamProject)'
+
+  # ----------------------------------------------------------
+  # Branch rules
+  # ----------------------------------------------------------
+
+  # XCFramework built from this branch becomes a stable release.
+  stableSourceBranch: 'refs/heads/release'
+
+  # Package.swift lives here and is updated by this pipeline.
+  packageManifestBranch: 'main'
 
 
-  # =========================================================
+  # ----------------------------------------------------------
   # GitHub
-  # =========================================================
+  # ----------------------------------------------------------
 
-  githubOwner: 'expertstack-studios'
+  githubOwner: 'REPLACE_WITH_GITHUB_ORG'
 
   githubRepository: 'ios-securevoicecall-sdk'
 
-  # Branch that produces a production/stable release.
-  releaseBranchName: 'release'
-
-  # Branch where Package.swift should be committed.
-  releaseManifestBranch: 'main'
-
-  # Required by GitHubRelease@1.
-  githubReleaseServiceConnection: 'github.com_expertstack-studios'
+  # Name of Azure DevOps GitHub OAuth/PAT service connection.
+  #
+  # Example:
+  # GitHub-SecuredCalls-Releases
+  githubReleaseServiceConnection: 'REPLACE_WITH_GITHUB_SERVICE_CONNECTION'
 
 
-  # =========================================================
-  # SDK
-  # =========================================================
+  # ----------------------------------------------------------
+  # Swift Package
+  # ----------------------------------------------------------
 
   sdkName: 'SecuredCallsVoiceSDK'
 
@@ -58,15 +68,19 @@ variables:
   zipName: 'SecuredCallsVoiceSDK.xcframework.zip'
 
 
-  # =========================================================
-  # Artifact
-  # =========================================================
+  # ----------------------------------------------------------
+  # Azure artifact
+  # ----------------------------------------------------------
 
   artifactName: 'SDK-xcframework-${{ parameters.sourceBuildId }}'
 
   artifactDownloadPath: '$(Pipeline.Workspace)/xcframework'
 
 
+
+# ============================================================
+# Stages
+# ============================================================
 
 stages:
 
@@ -83,9 +97,10 @@ stages:
 
     steps:
 
-    # =======================================================
-    # Checkout GitHub SPM repository
-    # =======================================================
+
+    # ========================================================
+    # 1. Checkout GitHub SPM repository
+    # ========================================================
 
     - checkout: self
       clean: true
@@ -95,113 +110,199 @@ stages:
       displayName: 'Checkout SPM repository'
 
 
-    # =======================================================
-    # Switch to branch that owns Package.swift
-    # =======================================================
+    # ========================================================
+    # 2. Checkout main branch containing Package.swift
+    # ========================================================
 
     - bash: |
         set -euo pipefail
 
-        echo "Fetching $(releaseManifestBranch)..."
+        echo "Fetching $(packageManifestBranch)..."
 
-        git fetch origin "$(releaseManifestBranch)" --tags
+        git fetch origin "$(packageManifestBranch)" --tags
 
         git checkout -B \
-          "$(releaseManifestBranch)" \
-          "origin/$(releaseManifestBranch)"
+          "$(packageManifestBranch)" \
+          "origin/$(packageManifestBranch)"
 
         echo
-        echo "Current branch:"
+        echo "Repository state:"
         git status --short --branch
 
-      displayName: 'Checkout manifest branch'
+      displayName: 'Checkout Package.swift branch'
 
 
-    # =======================================================
-    # Determine actual source branch
+    # ========================================================
+    # 3. Validate selected Azure build and determine
+    #    which branch produced the XCFramework
     #
-    # For PR builds:
-    #   System.PullRequest.SourceBranch
+    # This is important:
     #
-    # For regular/manual builds:
-    #   Build.SourceBranch
-    # =======================================================
+    # We do NOT use Build.SourceBranch of this release pipeline.
+    #
+    # We query the Azure build selected by sourceBuildId.
+    # ========================================================
 
     - bash: |
         set -euo pipefail
 
-        PR_SOURCE_BRANCH="${SYSTEM_PULLREQUEST_SOURCEBRANCH:-}"
+        BUILD_ID='${{ parameters.sourceBuildId }}'
 
-        if [ -n "$PR_SOURCE_BRANCH" ]; then
-          SOURCE_BRANCH="$PR_SOURCE_BRANCH"
-          echo "PR source branch detected."
-        else
-          SOURCE_BRANCH="$(Build.SourceBranch)"
-        fi
+        API_URL="$(System.CollectionUri)$(System.TeamProjectId)/_apis/build/builds/${BUILD_ID}?api-version=7.1"
 
-        echo
-        echo "Effective source branch:"
-        echo "$SOURCE_BRANCH"
+        echo "Reading Azure build:"
+        echo "$BUILD_ID"
 
-        echo "##vso[task.setvariable variable=effectiveSourceBranch]$SOURCE_BRANCH"
+        curl \
+          --fail \
+          --silent \
+          --show-error \
+          --header "Authorization: Bearer $SYSTEM_ACCESSTOKEN" \
+          "$API_URL" \
+          --output "$(Agent.TempDirectory)/source-build.json"
+
+        python3 - <<'PYTHON'
+        import json
+        import os
+        import sys
+
+        path = os.path.join(
+            os.environ["AGENT_TEMPDIRECTORY"],
+            "source-build.json"
+        )
+
+        with open(path, "r") as f:
+            build = json.load(f)
+
+        expected_definition = int(
+            os.environ["EXPECTED_PIPELINE_DEFINITION"]
+        )
+
+        actual_definition = build["definition"]["id"]
+        build_id = build["id"]
+        source_branch = build.get("sourceBranch", "")
+        build_result = build.get("result", "")
+        build_number = build.get("buildNumber", "")
+
+        print(f"Build ID       : {build_id}")
+        print(f"Build number   : {build_number}")
+        print(f"Definition ID  : {actual_definition}")
+        print(f"Source branch  : {source_branch}")
+        print(f"Result         : {build_result}")
+
+        if actual_definition != expected_definition:
+            print(
+                "##vso[task.logissue type=error]"
+                f"Build {build_id} belongs to pipeline definition "
+                f"{actual_definition}, expected {expected_definition}."
+            )
+            sys.exit(1)
+
+        if build_result != "succeeded":
+            print(
+                "##vso[task.logissue type=error]"
+                f"Source build result is '{build_result}', not succeeded."
+            )
+            sys.exit(1)
+
+        if not source_branch:
+            print(
+                "##vso[task.logissue type=error]"
+                "Could not determine source build branch."
+            )
+            sys.exit(1)
+
+        print(
+            f"##vso[task.setvariable variable=xcframeworkSourceBranch]"
+            f"{source_branch}"
+        )
+
+        print(
+            f"##vso[task.setvariable variable=xcframeworkBuildNumber]"
+            f"{build_number}"
+        )
+        PYTHON
 
       env:
-        SYSTEM_PULLREQUEST_SOURCEBRANCH: $(System.PullRequest.SourceBranch)
+        SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+        AGENT_TEMPDIRECTORY: $(Agent.TempDirectory)
+        EXPECTED_PIPELINE_DEFINITION: $(sourcePipelineDefinitionId)
 
-      displayName: 'Determine source branch'
+      displayName: 'Validate XCFramework source build'
 
 
-    # =======================================================
-    # Calculate next version
+    # ========================================================
+    # 4. Calculate next semantic version
     #
     # Example:
     #
-    # latest stable:
+    # Existing stable:
+    #
     #   v1.0.1
     #
-    # non-release branch:
+    # main build:
+    #
     #   v1.0.2-rc.1
     #   v1.0.2-rc.2
     #
-    # release branch:
+    # release build:
+    #
     #   v1.0.2
     #
-    # after v1.0.2:
+    # After that:
+    #
     #   v1.0.3-rc.1
-    # =======================================================
+    #
+    # ========================================================
 
     - bash: |
         set -euo pipefail
 
-        git fetch origin --tags
+        git fetch origin --tags --force
 
-        echo "Source branch:"
-        echo "$(effectiveSourceBranch)"
+        SOURCE_BRANCH="$(xcframeworkSourceBranch)"
+        STABLE_BRANCH="$(stableSourceBranch)"
 
-        RELEASE_BRANCH="refs/heads/$(releaseBranchName)"
-
-        # ---------------------------------------------------
-        # Find latest stable tag only.
-        #
-        # RC tags are intentionally ignored.
-        # ---------------------------------------------------
-
-        LATEST_STABLE=$(
-          git tag -l 'v[0-9]*.[0-9]*.[0-9]*' \
-            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-            | sort -V \
-            | tail -1
-        )
-
-        if [ -z "$LATEST_STABLE" ]; then
-          echo "No stable tag found."
-          echo "Starting from v0.0.0"
-          LATEST_STABLE="v0.0.0"
-        fi
+        echo "XCFramework source branch:"
+        echo "$SOURCE_BRANCH"
 
         echo
-        echo "Latest stable tag:"
+        echo "Stable release branch:"
+        echo "$STABLE_BRANCH"
+
+
+        # ----------------------------------------------------
+        # Find latest STABLE semantic version.
+        #
+        # RC tags are excluded.
+        #
+        # Using Git's version-aware tag sorting avoids relying
+        # on GNU sort -V, which may not be present on macOS.
+        # ----------------------------------------------------
+
+        LATEST_STABLE=$(
+          git tag \
+            --list 'v[0-9]*.[0-9]*.[0-9]*' \
+            --sort=-v:refname \
+          | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+          | head -n 1 \
+          || true
+        )
+
+
+        if [ -z "$LATEST_STABLE" ]; then
+
+          echo "No stable Git tag found."
+
+          LATEST_STABLE="v0.0.0"
+
+        fi
+
+
+        echo
+        echo "Latest stable:"
         echo "$LATEST_STABLE"
+
 
         CURRENT_VERSION="${LATEST_STABLE#v}"
 
@@ -211,45 +312,44 @@ stages:
 
         NEXT_BASE="${MAJOR}.${MINOR}.${NEXT_PATCH}"
 
+
         echo
-        echo "Next base version:"
+        echo "Next version base:"
         echo "$NEXT_BASE"
 
 
-        # ---------------------------------------------------
-        # Production release
-        # ---------------------------------------------------
+        # ----------------------------------------------------
+        # Stable release
+        # ----------------------------------------------------
 
-        if [ "$(effectiveSourceBranch)" = "$RELEASE_BRANCH" ]; then
+        if [ "$SOURCE_BRANCH" = "$STABLE_BRANCH" ]; then
 
           RELEASE_VERSION="$NEXT_BASE"
 
-          RELEASE_TAG="v$RELEASE_VERSION"
+          RELEASE_TAG="v${RELEASE_VERSION}"
 
           IS_PRERELEASE="false"
 
           MAKE_LATEST="true"
 
-          echo
-          echo "Release branch detected."
-          echo "Creating stable release."
+          RELEASE_KIND="release"
+
+
+        # ----------------------------------------------------
+        # RC release
+        # ----------------------------------------------------
 
         else
 
-          # -------------------------------------------------
-          # RC / prerelease
-          # -------------------------------------------------
-
-          echo
-          echo "Non-release branch detected."
-          echo "Creating RC release."
-
           LAST_RC=$(
-            git tag -l "v${NEXT_BASE}-rc.*" \
-              | grep -E "^v${NEXT_BASE//./\\.}-rc\.[0-9]+$" \
-              | sort -V \
-              | tail -1
+            git tag \
+              --list "v${NEXT_BASE}-rc.*" \
+              --sort=-v:refname \
+            | grep -E "^v${NEXT_BASE//./\\.}-rc\.[0-9]+$" \
+            | head -n 1 \
+            || true
           )
+
 
           if [ -z "$LAST_RC" ]; then
 
@@ -263,27 +363,31 @@ stages:
 
           fi
 
+
           RELEASE_VERSION="${NEXT_BASE}-rc.${NEXT_RC}"
 
-          RELEASE_TAG="v$RELEASE_VERSION"
+          RELEASE_TAG="v${RELEASE_VERSION}"
 
           IS_PRERELEASE="true"
 
           MAKE_LATEST="false"
 
+          RELEASE_KIND="prerelease"
+
         fi
 
 
         echo
-        echo "=========================================="
-        echo "Calculated release"
-        echo "=========================================="
+        echo "================================================"
+        echo "Calculated SDK release"
+        echo "================================================"
+        echo "Source branch : $SOURCE_BRANCH"
         echo "Latest stable : $LATEST_STABLE"
-        echo "Source branch : $(effectiveSourceBranch)"
         echo "Version       : $RELEASE_VERSION"
         echo "Tag           : $RELEASE_TAG"
+        echo "Type          : $RELEASE_KIND"
         echo "Pre-release   : $IS_PRERELEASE"
-        echo "=========================================="
+        echo "================================================"
 
 
         echo "##vso[task.setvariable variable=releaseVersion]$RELEASE_VERSION"
@@ -294,12 +398,14 @@ stages:
 
         echo "##vso[task.setvariable variable=makeLatestRelease]$MAKE_LATEST"
 
-      displayName: 'Calculate next SDK version'
+        echo "##vso[task.setvariable variable=releaseKind]$RELEASE_KIND"
+
+      displayName: 'Calculate SDK version'
 
 
-    # =======================================================
-    # Verify calculated tag does not already exist
-    # =======================================================
+    # ========================================================
+    # 5. Ensure tag doesn't already exist
+    # ========================================================
 
     - bash: |
         set -euo pipefail
@@ -317,45 +423,47 @@ stages:
 
         fi
 
-        echo "$(releaseTag) is available."
+        echo "Tag $(releaseTag) is available."
 
       displayName: 'Verify release tag'
 
 
-    # =======================================================
-    # Download XCFramework artifact
-    # =======================================================
+    # ========================================================
+    # 6. Download exact XCFramework artifact
+    #
+    # Artifact:
+    #
+    # SDK-xcframework-<BuildId>
+    #
+    # Example:
+    #
+    # SDK-xcframework-12345
+    #
+    # ========================================================
 
     - task: DownloadPipelineArtifact@2
       displayName: 'Download XCFramework artifact'
 
       inputs:
-
         buildType: 'specific'
-
-        project: '$(azureProject)'
-
+        project: '$(System.TeamProject)'
         definition: '$(sourcePipelineDefinitionId)'
-
         buildVersionToDownload: 'specific'
-
         pipelineId: '${{ parameters.sourceBuildId }}'
-
         artifactName: '$(artifactName)'
-
         targetPath: '$(artifactDownloadPath)'
 
 
-    # =======================================================
-    # Validate downloaded ZIP
-    # =======================================================
+    # ========================================================
+    # 7. Validate downloaded ZIP
+    # ========================================================
 
     - bash: |
         set -euo pipefail
 
         ZIP="$(artifactDownloadPath)/$(zipName)"
 
-        echo "Expected ZIP:"
+        echo "Expected artifact:"
         echo "$ZIP"
 
         if [ ! -f "$ZIP" ]; then
@@ -375,49 +483,54 @@ stages:
         fi
 
         echo
+        echo "Artifact:"
         ls -lh "$ZIP"
 
-      displayName: 'Validate downloaded artifact'
+      displayName: 'Validate XCFramework artifact'
 
 
-    # =======================================================
-    # Validate XCFramework structure
-    # =======================================================
+    # ========================================================
+    # 8. Validate XCFramework ZIP contents
+    # ========================================================
 
     - bash: |
         set -euo pipefail
 
         ZIP="$(artifactDownloadPath)/$(zipName)"
 
-        echo "Archive contents:"
-        unzip -l "$ZIP"
-
         if ! unzip -Z1 "$ZIP" \
           | grep -q '^SecuredCallsVoiceSDK\.xcframework/Info\.plist$'
         then
 
-          echo "##vso[task.logissue type=error]Invalid XCFramework ZIP."
+          echo "##vso[task.logissue type=error]Invalid XCFramework archive."
 
+          echo
           echo "Expected:"
           echo "SecuredCallsVoiceSDK.xcframework/Info.plist"
+
+          echo
+          echo "Archive contents:"
+          unzip -l "$ZIP"
 
           exit 1
 
         fi
 
-        echo
-        echo "XCFramework structure is valid."
+        echo "XCFramework ZIP structure is valid."
 
       displayName: 'Validate XCFramework structure'
 
 
-    # =======================================================
-    # Compute SwiftPM checksum
+    # ========================================================
+    # 9. Compute SwiftPM checksum
     #
     # IMPORTANT:
     #
-    # This exact ZIP is later uploaded to GitHub.
-    # =======================================================
+    # This is performed on the exact ZIP downloaded from the
+    # Azure artifact.
+    #
+    # That same ZIP is uploaded to GitHub later.
+    # ========================================================
 
     - bash: |
         set -euo pipefail
@@ -428,13 +541,12 @@ stages:
 
         if [ -z "$CHECKSUM" ]; then
 
-          echo "##vso[task.logissue type=error]Failed to calculate SwiftPM checksum."
+          echo "##vso[task.logissue type=error]Failed to compute SwiftPM checksum."
 
           exit 1
 
         fi
 
-        echo
         echo "SwiftPM checksum:"
         echo "$CHECKSUM"
 
@@ -443,16 +555,16 @@ stages:
       displayName: 'Compute SwiftPM checksum'
 
 
-    # =======================================================
-    # Generate GitHub release asset URL
-    # =======================================================
+    # ========================================================
+    # 10. Generate GitHub binary URL
+    # ========================================================
 
     - bash: |
         set -euo pipefail
 
         URL="https://github.com/$(githubOwner)/$(githubRepository)/releases/download/$(releaseTag)/$(zipName)"
 
-        echo "Binary URL:"
+        echo "SwiftPM binary URL:"
         echo "$URL"
 
         echo "##vso[task.setvariable variable=binaryDownloadUrl]$URL"
@@ -460,30 +572,35 @@ stages:
       displayName: 'Generate binary URL'
 
 
-    # =======================================================
-    # Update Package.swift
+    # ========================================================
+    # 11. Update Package.swift
     #
-    # Supports either:
+    # Handles BOTH:
+    #
+    # Initial state:
     #
     # .binaryTarget(
-    #     name: "...",
-    #     path: "..."
+    #     name: "SecuredCallsVoiceSDKBinary",
+    #     path: "SDK/SecuredCallsVoiceSDK.xcframework"
     # )
     #
-    # or:
+    # AND subsequent releases:
     #
     # .binaryTarget(
-    #     name: "...",
+    #     name: "SecuredCallsVoiceSDKBinary",
     #     url: "...",
     #     checksum: "..."
     # )
-    # =======================================================
+    #
+    # Azure variables are passed as environment variables to
+    # avoid YAML/Python parser problems.
+    # ========================================================
 
     - bash: |
         set -euo pipefail
 
-        python3 <<'PYTHON'
-
+        python3 - <<'PYTHON'
+        import os
         import pathlib
         import re
         import sys
@@ -497,78 +614,74 @@ stages:
             )
             sys.exit(1)
 
+        target_name = os.environ["BINARY_TARGET_NAME"]
+        binary_url = os.environ["BINARY_DOWNLOAD_URL"]
+        checksum = os.environ["SWIFT_PACKAGE_CHECKSUM"]
 
         original = package_path.read_text()
 
-        target_name = "$(binaryTargetName)"
-
-        binary_url = "$(binaryDownloadUrl)"
-
-        checksum = "$(swiftPackageChecksum)"
-
-
-        replacement = f'''\
-.binaryTarget(
-    name: "{target_name}",
-    url: "{binary_url}",
-    checksum: "{checksum}"
-)'''
-
-
         pattern = re.compile(
-            rf'''
-            \.binaryTarget
-            \(
-                \s*
-                name
-                \s*:\s*
-                "{re.escape(target_name)}"
-                \s*
-                ,
-                .*?
-            \)
-            ''',
-            re.DOTALL | re.VERBOSE
+            r'(?P<indent>[ \t]*)'
+            r'\.binaryTarget\(\s*'
+            r'name:\s*"'
+            + re.escape(target_name)
+            + r'"\s*,'
+            r'.*?'
+            r'\)',
+            re.DOTALL
         )
 
+        match = pattern.search(original)
 
-        updated, count = pattern.subn(
-            replacement,
-            original,
-            count=1
-        )
-
-
-        if count != 1:
+        if not match:
             print(
                 "##vso[task.logissue type=error]"
-                f"Could not find binaryTarget '{target_name}'."
+                f"Could not find binaryTarget '{target_name}' "
+                "in Package.swift."
             )
             sys.exit(1)
 
+        indent = match.group("indent")
+        child_indent = indent + "    "
+
+        replacement = (
+            f'{indent}.binaryTarget(\n'
+            f'{child_indent}name: "{target_name}",\n'
+            f'{child_indent}url: "{binary_url}",\n'
+            f'{child_indent}checksum: "{checksum}"\n'
+            f'{indent})'
+        )
+
+        updated = (
+            original[:match.start()]
+            + replacement
+            + original[match.end():]
+        )
 
         package_path.write_text(updated)
 
-        print(
-            f"Updated binary target '{target_name}'."
-        )
-
+        print(f"Updated binary target: {target_name}")
+        print(f"URL: {binary_url}")
+        print(f"Checksum: {checksum}")
         PYTHON
 
         echo
         echo "Updated Package.swift:"
-        echo "----------------------------------------"
-
+        echo "------------------------------------------------"
         cat Package.swift
+        echo "------------------------------------------------"
 
-        echo "----------------------------------------"
+      env:
+        BINARY_TARGET_NAME: $(binaryTargetName)
+        BINARY_DOWNLOAD_URL: $(binaryDownloadUrl)
+        SWIFT_PACKAGE_CHECKSUM: $(swiftPackageChecksum)
 
       displayName: 'Update Package.swift'
 
 
-    # =======================================================
-    # Validate Package.swift contains correct values
-    # =======================================================
+    # ========================================================
+    # 12. Verify Package.swift values
+    # ========================================================
 
     - bash: |
         set -euo pipefail
@@ -581,14 +694,17 @@ stages:
           '$(swiftPackageChecksum)' \
           Package.swift
 
-        echo "Package.swift URL/checksum verified."
+        echo "Package.swift URL and checksum verified."
 
       displayName: 'Verify Package.swift'
 
 
-    # =======================================================
-    # Validate Swift manifest syntax
-    # =======================================================
+    # ========================================================
+    # 13. Validate manifest syntax
+    #
+    # dump-package parses Package.swift without requiring us
+    # to build the binary target.
+    # ========================================================
 
     - bash: |
         set -euo pipefail
@@ -596,14 +712,14 @@ stages:
         swift package dump-package \
           > "$(Agent.TempDirectory)/package.json"
 
-        echo "Package.swift is syntactically valid."
+        echo "Package.swift parsed successfully."
 
       displayName: 'Validate Swift Package manifest'
 
 
-    # =======================================================
-    # Show diff
-    # =======================================================
+    # ========================================================
+    # 14. Show changes
+    # ========================================================
 
     - bash: |
         set -euo pipefail
@@ -615,7 +731,7 @@ stages:
 
         if git diff --quiet -- Package.swift; then
 
-          echo "##vso[task.logissue type=error]Package.swift contains no changes."
+          echo "##vso[task.logissue type=error]Package.swift did not change."
 
           exit 1
 
@@ -624,9 +740,9 @@ stages:
       displayName: 'Review Package.swift changes'
 
 
-    # =======================================================
-    # Commit Package.swift
-    # =======================================================
+    # ========================================================
+    # 15. Commit Package.swift
+    # ========================================================
 
     - bash: |
         set -euo pipefail
@@ -655,55 +771,66 @@ stages:
       displayName: 'Commit Package.swift'
 
 
-    # =======================================================
-    # Push manifest update
-    # =======================================================
+    # ========================================================
+    # 16. Push Package.swift to GitHub
+    #
+    # persistCredentials:true from checkout is used here.
+    #
+    # NOTE:
+    # This requires the Azure Pipelines identity to be allowed
+    # to push to main.
+    # ========================================================
 
     - bash: |
         set -euo pipefail
 
-        echo "Pushing to $(releaseManifestBranch)..."
+        echo "Pushing Package.swift to $(packageManifestBranch)..."
 
         git push \
           origin \
-          HEAD:"$(releaseManifestBranch)"
+          HEAD:"$(packageManifestBranch)"
 
       displayName: 'Push Package.swift to GitHub'
 
 
-    # =======================================================
-    # Create GitHub release
-    # =======================================================
+    # ========================================================
+    # 17. Create GitHub Release
+    #
+    # GitHubRelease@1 requires an OAuth/PAT GitHub service
+    # connection.
+    #
+    # GitHubRelease@1 officially supports:
+    #
+    # isPreRelease
+    # isDraft
+    # makeLatest
+    # assets
+    #
+    # ========================================================
 
     - task: GitHubRelease@1
       displayName: 'Create GitHub Release'
 
       inputs:
-
         gitHubConnection: '$(githubReleaseServiceConnection)'
-
         repositoryName: '$(githubOwner)/$(githubRepository)'
-
         action: 'create'
-
         target: '$(releaseCommit)'
-
         tagSource: 'userSpecifiedTag'
-
         tag: '$(releaseTag)'
-
         title: 'SecuredCallsVoiceSDK $(releaseTag)'
-
         releaseNotesSource: 'inline'
-
         releaseNotesInline: |
           SecuredCallsVoiceSDK $(releaseTag)
-
-          Source branch:
-          $(effectiveSourceBranch)
-
+          Release type:
+          $(releaseKind)
+          XCFramework source branch:
+          $(xcframeworkSourceBranch)
           Azure DevOps Build ID:
           ${{ parameters.sourceBuildId }}
+
+          Azure DevOps Build Number:
+          $(xcframeworkBuildNumber)
 
           SwiftPM checksum:
           $(swiftPackageChecksum)
@@ -720,12 +847,14 @@ stages:
         addChangeLog: false
 
 
-    # =======================================================
-    # Verify published release asset
+    # ========================================================
+    # 18. Verify uploaded GitHub binary
     #
-    # This assumes the GitHub release asset is publicly
-    # downloadable.
-    # =======================================================
+    # This works for PUBLIC GitHub release assets.
+    #
+    # If this repository is PRIVATE, this step needs an
+    # authenticated GitHub API download instead.
+    # ========================================================
 
     - bash: |
         set -euo pipefail
@@ -734,14 +863,14 @@ stages:
 
         REMOTE_ZIP="$(Agent.TempDirectory)/published-$(zipName)"
 
-        echo "Published URL:"
-        echo "$URL"
-
         SUCCESS=false
+
+        echo "Verifying published asset:"
+        echo "$URL"
 
         for ATTEMPT in {1..10}; do
 
-          echo "Download attempt $ATTEMPT of 10"
+          echo "Attempt $ATTEMPT of 10..."
 
           if curl \
             --fail \
@@ -795,33 +924,34 @@ stages:
 
 
         echo
-        echo "GitHub XCFramework verified successfully."
+        echo "Published XCFramework verified successfully."
 
       displayName: 'Verify published XCFramework'
 
 
-    # =======================================================
-    # Release summary
-    # =======================================================
+    # ========================================================
+    # 19. Summary
+    # ========================================================
 
     - bash: |
         echo
-        echo "=============================================="
-        echo "SecuredCallsVoiceSDK release completed"
-        echo "=============================================="
+        echo "================================================"
+        echo "SecuredCallsVoiceSDK published successfully"
+        echo "================================================"
         echo
-        echo "Source branch : $(effectiveSourceBranch)"
-        echo "Source build  : ${{ parameters.sourceBuildId }}"
-        echo "Version       : $(releaseVersion)"
-        echo "Tag           : $(releaseTag)"
-        echo "Pre-release   : $(isGitHubPreRelease)"
+        echo "Azure Build ID : ${{ parameters.sourceBuildId }}"
+        echo "Source branch  : $(xcframeworkSourceBranch)"
+        echo "Release type   : $(releaseKind)"
+        echo "Version        : $(releaseVersion)"
+        echo "Tag            : $(releaseTag)"
+        echo "Pre-release    : $(isGitHubPreRelease)"
         echo
-        echo "Binary URL:"
+        echo "Binary:"
         echo "$(binaryDownloadUrl)"
         echo
         echo "Checksum:"
         echo "$(swiftPackageChecksum)"
         echo
-        echo "=============================================="
+        echo "================================================"
 
       displayName: 'Release summary'
