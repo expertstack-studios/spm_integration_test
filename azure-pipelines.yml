@@ -792,6 +792,32 @@ stages:
 
       displayName: 'Push Package.swift to GitHub'
 
+    - bash: |
+        set -euo pipefail
+
+        echo "Expected release commit:"
+        echo "$(releaseCommit)"
+
+        REMOTE_MAIN=$(
+          git ls-remote origin \
+            "refs/heads/$(packageManifestBranch)" \
+          | awk '{print $1}'
+        )
+
+        echo
+        echo "Remote $(packageManifestBranch) commit:"
+        echo "$REMOTE_MAIN"
+
+        if [ "$REMOTE_MAIN" != "$(releaseCommit)" ]; then
+          echo "##vso[task.logissue type=error]Remote branch does not point to release commit."
+          exit 1
+        fi
+
+        echo
+        echo "GitHub branch contains expected release commit."
+
+      displayName: 'Verify GitHub release commit'
+
 
     # ========================================================
     # 17. Create GitHub Release
@@ -815,7 +841,7 @@ stages:
         gitHubConnection: '$(githubReleaseServiceConnection)'
         repositoryName: '$(githubOwner)/$(githubRepository)'
         action: 'create'
-        target: '$(releaseCommit)'
+        target: '$(packageManifestBranch)'
         tagSource: 'userSpecifiedTag'
         tag: '$(releaseTag)'
         title: 'SecuredCallsVoiceSDK $(releaseTag)'
