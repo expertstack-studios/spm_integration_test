@@ -817,6 +817,87 @@ stages:
         echo "GitHub branch contains expected release commit."
 
       displayName: 'Verify GitHub release commit'
+    
+    # ========================================================
+    # Create and push Git tag explicitly
+    # ========================================================
+
+    - bash: |
+        set -euo pipefail
+
+        echo "Creating Git tag:"
+        echo "$(releaseTag)"
+
+        # Make sure remote main contains the commit we just pushed.
+        git fetch origin "$(packageManifestBranch)" --tags
+
+        REMOTE_COMMIT=$(
+          git rev-parse "origin/$(packageManifestBranch)"
+        )
+
+        echo "Release commit : $(releaseCommit)"
+        echo "Remote commit  : $REMOTE_COMMIT"
+
+        if [ "$REMOTE_COMMIT" != "$(releaseCommit)" ]; then
+          echo "##vso[task.logissue type=error]Remote main does not point to release commit."
+          exit 1
+        fi
+
+        # Safety check.
+        if git rev-parse "refs/tags/$(releaseTag)" >/dev/null 2>&1; then
+          echo "##vso[task.logissue type=error]Tag $(releaseTag) already exists locally."
+          exit 1
+        fi
+
+        if git ls-remote \
+          --exit-code \
+          --tags \
+          origin \
+          "refs/tags/$(releaseTag)" \
+          >/dev/null 2>&1
+        then
+          echo "##vso[task.logissue type=error]Tag $(releaseTag) already exists on GitHub."
+          exit 1
+        fi
+
+        git tag \
+          -a "$(releaseTag)" \
+          "$(releaseCommit)" \
+          -m "SecuredCallsVoiceSDK $(releaseVersion)"
+
+        git push origin \
+          "refs/tags/$(releaseTag)"
+
+        echo
+        echo "Tag pushed successfully."
+
+      displayName: 'Create and push Git tag'
+
+    # ========================================================
+    # Verify GitHub tag exists
+    # ========================================================
+
+    - bash: |
+        set -euo pipefail
+
+        echo "Checking remote tag $(releaseTag)..."
+
+        TAG_REF=$(
+          git ls-remote \
+            --tags \
+            origin \
+            "refs/tags/$(releaseTag)"
+        )
+
+        if [ -z "$TAG_REF" ]; then
+          echo "##vso[task.logissue type=error]Tag $(releaseTag) was not found on GitHub."
+          exit 1
+        fi
+
+        echo "Remote tag found:"
+        echo "$TAG_REF"
+
+      displayName: 'Verify GitHub tag'
 
 
     # ========================================================
@@ -848,18 +929,11 @@ stages:
         releaseNotesSource: 'inline'
         releaseNotesInline: |
           SecuredCallsVoiceSDK $(releaseTag)
-          Release type:
-          $(releaseKind)
-          XCFramework source branch:
-          $(xcframeworkSourceBranch)
-          Azure DevOps Build ID:
-          ${{ parameters.sourceBuildId }}
-
-          Azure DevOps Build Number:
-          $(xcframeworkBuildNumber)
-
-          SwiftPM checksum:
-          $(swiftPackageChecksum)
+          Release type:  $(releaseKind)
+          XCFramework source branch: $(xcframeworkSourceBranch)
+          Azure DevOps Build ID: ${{ parameters.sourceBuildId }}
+          Azure DevOps Build Number: $(xcframeworkBuildNumber)
+          SwiftPM checksum: $(swiftPackageChecksum)
 
         assets: |
           $(artifactDownloadPath)/$(zipName)
