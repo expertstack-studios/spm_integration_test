@@ -24,7 +24,7 @@ variables:
   #
   # Example URL:
   # .../_build?definitionId=123
-  sourcePipelineDefinitionId: 'REPLACE_WITH_PIPELINE_DEFINITION_ID'
+  sourcePipelineDefinitionId: '106'
 
   azureProject: '$(System.TeamProject)'
 
@@ -33,7 +33,7 @@ variables:
   # GitHub
   # =========================================================
 
-  githubOwner: 'REPLACE_WITH_GITHUB_ORG'
+  githubOwner: 'expertstack-studios'
 
   githubRepository: 'ios-securevoicecall-sdk'
 
