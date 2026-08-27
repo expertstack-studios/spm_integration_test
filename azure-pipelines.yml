@@ -44,7 +44,7 @@ variables:
   releaseManifestBranch: 'main'
 
   # Required by GitHubRelease@1.
-  githubReleaseServiceConnection: 'REPLACE_WITH_GITHUB_SERVICE_CONNECTION'
+  githubReleaseServiceConnection: 'github.com_expertstack-studios'
 
 
   # =========================================================
