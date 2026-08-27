@@ -28,7 +28,7 @@ variables:
   # Example pipeline URL:
   # .../_build?definitionId=123
   #
-  sourcePipelineDefinitionId: 'REPLACE_WITH_PIPELINE_DEFINITION_ID'
+  sourcePipelineDefinitionId: '106'
 
 
   # ----------------------------------------------------------
@@ -46,7 +46,7 @@ variables:
   # GitHub
   # ----------------------------------------------------------
 
-  githubOwner: 'REPLACE_WITH_GITHUB_ORG'
+  githubOwner: 'expertstack-studios'
 
   githubRepository: 'ios-securevoicecall-sdk'
 
@@ -54,7 +54,7 @@ variables:
   #
   # Example:
   # GitHub-SecuredCalls-Releases
-  githubReleaseServiceConnection: 'REPLACE_WITH_GITHUB_SERVICE_CONNECTION'
+  githubReleaseServiceConnection: 'github.com_expertstack-studios'
 
 
   # ----------------------------------------------------------
