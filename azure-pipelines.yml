@@ -48,7 +48,7 @@ variables:
 
   githubOwner: 'expertstack-studios'
 
-  githubRepository: 'ios-securevoicecall-sdk'
+  githubRepository: 'spm_integration_test'
 
   # Name of Azure DevOps GitHub OAuth/PAT service connection.
   #
