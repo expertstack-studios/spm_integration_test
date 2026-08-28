@@ -24,27 +24,6 @@ resources:
 # ============================================================
 
 variables:
-
-  # ----------------------------------------------------------
-  # Azure DevOps
-  # ----------------------------------------------------------
-
-  # ----------------------------------------------------------
-  # Triggering XCFramework build
-  # ----------------------------------------------------------
-
-  # Azure DevOps run/build ID of the XCFramework pipeline.
-  sourceBuildId: $[ resources.pipeline.xcframeworkBuild.runID ]
-
-  # Examples:
-  # refs/heads/main
-  # refs/heads/release
-  xcframeworkSourceBranch: $[ resources.pipeline.xcframeworkBuild.sourceBranch ]
-
-  # Build/run name from the XCFramework pipeline.
-  xcframeworkBuildNumber: $[ resources.pipeline.xcframeworkBuild.runName ]
-
-
   # ----------------------------------------------------------
   # Branch rules
   # ----------------------------------------------------------
@@ -61,7 +40,6 @@ variables:
   # ----------------------------------------------------------
 
   githubOwner: 'expertstack-studios'
-
   githubRepository: 'spm_integration_test'
 
   # Name of Azure DevOps GitHub OAuth/PAT service connection.
@@ -76,9 +54,7 @@ variables:
   # ----------------------------------------------------------
 
   sdkName: 'SecuredCallsVoiceSDK'
-
   binaryTargetName: 'SecuredCallsVoiceSDKBinary'
-
   zipName: 'SecuredCallsVoiceSDK.xcframework.zip'
 
 
@@ -87,9 +63,7 @@ variables:
   # ----------------------------------------------------------
 
   artifactName: 'SDK-xcframework-$(sourceBuildId)'
-
   pipelineResourcePath: '$(Pipeline.Workspace)/xcframeworkBuild'
-
   artifactDownloadPath: '$(Pipeline.Workspace)/xcframework'
 
 
@@ -147,25 +121,68 @@ stages:
 
       displayName: 'Checkout Package.swift branch'
 
+    # ========================================================
+    # 3. Debug pipeline trigger
+    # ========================================================
+
+    - bash: |
+        echo "Build.Reason:"
+        echo "$(Build.Reason)"
+
+        echo
+        echo "Resources.TriggeringAlias:"
+        echo "$(Resources.TriggeringAlias)"
+
+        echo
+        echo "Resources.TriggeringCategory:"
+        echo "$(Resources.TriggeringCategory)"
+
+        echo
+        echo "runID:"
+        echo "$(resources.pipeline.xcframeworkBuild.runID)"
+
+        echo
+        echo "runName:"
+        echo "$(resources.pipeline.xcframeworkBuild.runName)"
+
+        echo
+        echo "sourceBranch:"
+        echo "$(resources.pipeline.xcframeworkBuild.sourceBranch)"
+
+        echo
+        echo "sourceCommit:"
+        echo "$(resources.pipeline.xcframeworkBuild.sourceCommit)"
+
+      displayName: 'Debug pipeline trigger'
+
 
     # ========================================================
-    # 3. Validate triggering XCFramework build
+    # 4. Validate triggering XCFramework build
     # ========================================================
 
     - bash: |
         set -euo pipefail
 
-        BUILD_ID="$(sourceBuildId)"
-        SOURCE_BRANCH="$(xcframeworkSourceBranch)"
-        BUILD_NUMBER="$(xcframeworkBuildNumber)"
+        BUILD_ID="$(resources.pipeline.xcframeworkBuild.runID)"
+        BUILD_NUMBER="$(resources.pipeline.xcframeworkBuild.runName)"
+        SOURCE_BRANCH="$(resources.pipeline.xcframeworkBuild.sourceBranch)"
+        SOURCE_COMMIT="$(resources.pipeline.xcframeworkBuild.sourceCommit)"
 
         echo "=============================================="
         echo "Triggering XCFramework build"
         echo "=============================================="
+        echo "Build reason  : $(Build.Reason)"
         echo "Build ID      : $BUILD_ID"
         echo "Build number  : $BUILD_NUMBER"
         echo "Source branch : $SOURCE_BRANCH"
+        echo "Source commit : $SOURCE_COMMIT"
         echo "=============================================="
+
+        if [ "$(Build.Reason)" != "ResourceTrigger" ]; then
+          echo "##vso[task.logissue type=error]This pipeline was not triggered by the XCFramework pipeline."
+          echo "Run '[iOS] Build and Deploy Secured Calls Voice SDK' instead."
+          exit 1
+        fi
 
         if [ -z "$BUILD_ID" ]; then
           echo "##vso[task.logissue type=error]XCFramework source Build ID is empty."
@@ -184,11 +201,19 @@ stages:
           exit 1
         fi
 
+        echo
+        echo "Setting Azure pipeline variables..."
+
+        echo "##vso[task.setvariable variable=sourceBuildId]$BUILD_ID"
+        echo "##vso[task.setvariable variable=xcframeworkBuildNumber]$BUILD_NUMBER"
+        echo "##vso[task.setvariable variable=xcframeworkSourceBranch]$SOURCE_BRANCH"
+        echo "##vso[task.setvariable variable=xcframeworkSourceCommit]$SOURCE_COMMIT"
+
       displayName: 'Validate XCFramework source build'
 
 
     # ========================================================
-    # 4. Calculate next semantic version
+    # 5. Calculate next semantic version
     #
     # Example:
     #
@@ -363,7 +388,7 @@ stages:
 
 
     # ========================================================
-    # 5. Verify calculated tag doesn't already exist
+    # 6. Verify calculated tag doesn't already exist
     # ========================================================
 
     - bash: |
@@ -388,7 +413,7 @@ stages:
 
 
     # ========================================================
-    # 6. Download artifacts from triggering XCFramework run
+    # 7. Download artifacts from triggering XCFramework run
     #
     # Azure automatically downloads artifacts from the exact
     # pipeline resource run that triggered this pipeline.
@@ -398,7 +423,7 @@ stages:
       displayName: 'Download XCFramework pipeline artifacts'
 
     # ========================================================
-    # 7. Locate exact XCFramework ZIP
+    # 8. Locate exact XCFramework ZIP
     #
     # Expected structure:
     #
@@ -468,7 +493,7 @@ stages:
       displayName: 'Locate XCFramework artifact'
 
     # ========================================================
-    # 8. Validate XCFramework ZIP
+    # 9. Validate XCFramework ZIP
     # ========================================================
 
     - bash: |
@@ -500,7 +525,7 @@ stages:
 
 
     # ========================================================
-    # 9. Compute SwiftPM checksum
+    # 10. Compute SwiftPM checksum
     # ========================================================
 
     - bash: |
@@ -527,7 +552,7 @@ stages:
 
 
     # ========================================================
-    # 10. Generate GitHub release asset URL
+    # 11. Generate GitHub release asset URL
     #
     # IMPORTANT:
     # This must be a plain URL — no Markdown.
@@ -547,7 +572,7 @@ stages:
 
 
     # ========================================================
-    # 11. Update Package.swift
+    # 12. Update Package.swift
     #
     # Supports either:
     #
@@ -643,7 +668,7 @@ stages:
 
 
     # ========================================================
-    # 12. Verify Package.swift values
+    # 13. Verify Package.swift values
     # ========================================================
 
     - bash: |
@@ -663,7 +688,7 @@ stages:
 
 
     # ========================================================
-    # 13. Validate Swift manifest
+    # 14. Validate Swift manifest
     # ========================================================
 
     - bash: |
@@ -678,7 +703,7 @@ stages:
 
 
     # ========================================================
-    # 14. Review changes
+    # 15. Review changes
     # ========================================================
 
     - bash: |
@@ -701,7 +726,7 @@ stages:
 
 
     # ========================================================
-    # 15. Commit Package.swift
+    # 16. Commit Package.swift
     # ========================================================
 
     - bash: |
@@ -731,7 +756,7 @@ stages:
       displayName: 'Commit Package.swift'
 
     # ========================================================
-    # 16. Push Package.swift
+    # 17. Push Package.swift
     # ========================================================
 
     - bash: |
@@ -746,7 +771,7 @@ stages:
       displayName: 'Push Package.swift to GitHub'
 
     # ========================================================
-    # 17. Verify pushed commit
+    # 18. Verify pushed commit
     # ========================================================
 
     - bash: |
@@ -778,7 +803,7 @@ stages:
       displayName: 'Verify GitHub release commit'
     
     # ========================================================
-    # 18. Create and push Git tag explicitly
+    # 19. Create and push Git tag explicitly
     # ========================================================
 
     - bash: |
@@ -836,7 +861,7 @@ stages:
       displayName: 'Create and push Git tag'
 
     # ========================================================
-    # 19. Verify GitHub tag
+    # 20. Verify GitHub tag
     # ========================================================
 
     - bash: |
@@ -863,7 +888,7 @@ stages:
 
 
     # ========================================================
-    # 20. Create GitHub Release + upload XCFramework ZIP
+    # 21. Create GitHub Release + upload XCFramework ZIP
     # ========================================================
 
     - task: GitHubRelease@1
@@ -899,7 +924,7 @@ stages:
 
 
     # ========================================================
-    # 21. Verify uploaded GitHub binary
+    # 22. Verify uploaded GitHub binary
     #
     # Suitable for a public GitHub repository/release asset.
     # ========================================================
@@ -978,7 +1003,7 @@ stages:
 
 
     # ========================================================
-    # 22. Summary
+    # 23. Summary
     # ========================================================
 
     - bash: |
