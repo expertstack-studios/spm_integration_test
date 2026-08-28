@@ -196,7 +196,6 @@ stages:
 
         if [ "$SOURCE_BRANCH" != "refs/heads/main" ] && \
            [ "$SOURCE_BRANCH" != "refs/heads/release" ]; then
-
           echo "##vso[task.logissue type=error]Unsupported XCFramework source branch: $SOURCE_BRANCH"
           exit 1
         fi
@@ -257,20 +256,20 @@ stages:
         #
         # Ignores:
         #
-        # v1.0.2-rc.1
-        # v1.0.2-beta.1
+        # 1.0.2-rc.1
+        # 1.0.2-beta.1
         #
         # Includes:
         #
-        # v1.0.1
-        # v1.1.0
+        # 1.0.1
+        # 1.1.0
         # ----------------------------------------------------
 
         LATEST_STABLE=$(
           git tag \
-            --list 'v[1-9]*.[0-9]*.[0-9]*' \
+            --list '[1-9]*.[0-9]*.[0-9]*' \
             --sort=-v:refname \
-          | grep -E '^v[1-9]+\.[0-9]+\.[0-9]+$' \
+          | grep -E '^[1-9]+\.[0-9]+\.[0-9]+$' \
           | head -n 1 \
           || true
         )
@@ -278,7 +277,7 @@ stages:
 
         if [ -z "$LATEST_STABLE" ]; then
           echo "No stable Git tag found."
-          LATEST_STABLE="v1.0.0"
+          LATEST_STABLE="1.0.0"
 
         fi
 
@@ -288,7 +287,7 @@ stages:
         echo "$LATEST_STABLE"
 
 
-        CURRENT_VERSION="${LATEST_STABLE#v}"
+        CURRENT_VERSION="${LATEST_STABLE#}"
 
         IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
 
@@ -309,13 +308,9 @@ stages:
         if [ "$SOURCE_BRANCH" = "$STABLE_BRANCH" ]; then
 
           RELEASE_VERSION="$NEXT_BASE"
-
-          RELEASE_TAG="v${RELEASE_VERSION}"
-
+          RELEASE_TAG="${RELEASE_VERSION}"
           IS_PRERELEASE="false"
-
           MAKE_LATEST="true"
-
           RELEASE_KIND="release"
 
 
@@ -327,37 +322,27 @@ stages:
 
           LAST_RC=$(
             git tag \
-              --list "v${NEXT_BASE}-rc.*" \
+              --list "${NEXT_BASE}-rc.*" \
               --sort=-v:refname \
-            | grep -E "^v${NEXT_BASE//./\\.}-rc\.[0-9]+$" \
+            | grep -E "^${NEXT_BASE//./\\.}-rc\.[0-9]+$" \
             | head -n 1 \
             || true
           )
 
 
           if [ -z "$LAST_RC" ]; then
-
             NEXT_RC=1
-
           else
-
             LAST_RC_NUMBER="${LAST_RC##*.}"
-
             NEXT_RC=$((LAST_RC_NUMBER + 1))
-
           fi
 
 
           RELEASE_VERSION="${NEXT_BASE}-rc.${NEXT_RC}"
-
-          RELEASE_TAG="v${RELEASE_VERSION}"
-
+          RELEASE_TAG="${RELEASE_VERSION}"
           IS_PRERELEASE="true"
-
           MAKE_LATEST="false"
-
           RELEASE_KIND="prerelease"
-
         fi
 
 
@@ -375,13 +360,9 @@ stages:
 
 
         echo "##vso[task.setvariable variable=releaseVersion]$RELEASE_VERSION"
-
         echo "##vso[task.setvariable variable=releaseTag]$RELEASE_TAG"
-
         echo "##vso[task.setvariable variable=isGitHubPreRelease]$IS_PRERELEASE"
-
         echo "##vso[task.setvariable variable=makeLatestRelease]$MAKE_LATEST"
-
         echo "##vso[task.setvariable variable=releaseKind]$RELEASE_KIND"
 
       displayName: 'Calculate SDK version'
@@ -463,18 +444,12 @@ stages:
             -quit
         )
 
-
         if [ -z "$ZIP" ] || [ ! -f "$ZIP" ]; then
-
           echo "##vso[task.logissue type=error]XCFramework ZIP was not found in $EXPECTED_ARTIFACT."
-
           exit 1
-
         fi
 
-
         mkdir -p "$(artifactDownloadPath)"
-
 
         cp \
           "$ZIP" \
@@ -536,11 +511,8 @@ stages:
         CHECKSUM=$(swift package compute-checksum "$ZIP")
 
         if [ -z "$CHECKSUM" ]; then
-
           echo "##vso[task.logissue type=error]Failed to compute SwiftPM checksum."
-
           exit 1
-
         fi
 
         echo "SwiftPM checksum:"
