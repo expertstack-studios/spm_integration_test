@@ -873,7 +873,7 @@ stages:
         target: '$(packageManifestBranch)'
         tagSource: 'userSpecifiedTag'
         tag: '$(releaseTag)'
-        title: 'SecuredCallsVoiceSDK $(releaseTag)'
+        title: '$(releaseTag)'
         releaseNotesSource: 'inline'
         releaseNotesInline: |
           SecuredCallsVoiceSDK $(releaseTag)
